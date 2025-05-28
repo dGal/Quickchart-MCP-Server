@@ -56,7 +56,7 @@ class QuickChartServer {
     );
 
     this.setupToolHandlers();
-    
+
     this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
       await this.server.close();
@@ -85,23 +85,23 @@ class QuickChartServer {
         'No arguments provided to generateChartConfig'
       );
     }
-    
+
     if (!args.type) {
       throw new McpError(
         ErrorCode.InvalidParams,
         'Chart type is required'
       );
     }
-    
+
     if (!args.datasets || !Array.isArray(args.datasets)) {
       throw new McpError(
         ErrorCode.InvalidParams,
         'Datasets must be a non-empty array'
       );
     }
-    
+
     const { type, labels, datasets, title, options = {} } = args;
-    
+
     this.validateChartType(type);
 
     const config: ChartConfig = {
@@ -181,6 +181,51 @@ class QuickChartServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
+          name: 'create_chart',
+          description: 'Create a chart using QuickChart - get short URL',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                description: 'Chart type (bar, line, pie, doughnut, radar, polarArea, scatter, bubble, radialGauge, speedometer)'
+              },
+              labels: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Labels for data points'
+              },
+              datasets: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string' },
+                    data: { type: 'array' , items: { type: 'number' } },
+                    backgroundColor: {
+                      oneOf: [
+                        { type: 'string' },
+                        { type: 'array', items: { type: 'string' } }
+                      ]
+                    },
+                    borderColor: {
+                      oneOf: [
+                        { type: 'string' },
+                        { type: 'array', items: { type: 'string' } }
+                      ]
+                    },
+                    additionalConfig: { type: 'object' }
+                  },
+                  required: ['data']
+                }
+              },
+              title: { type: 'string' },
+              options: { type: 'object' }
+            },
+            required: ['type', 'datasets']
+          }
+        },
+        {
           name: 'generate_chart',
           description: 'Generate a chart using QuickChart',
           inputSchema: {
@@ -201,8 +246,8 @@ class QuickChartServer {
                   type: 'object',
                   properties: {
                     label: { type: 'string' },
-                    data: { type: 'array' },
-                    backgroundColor: { 
+                    data: { type: 'array' , items: { type: 'number' } },
+                    backgroundColor: {
                       oneOf: [
                         { type: 'string' },
                         { type: 'array', items: { type: 'string' } }
@@ -242,7 +287,7 @@ class QuickChartServer {
             },
             required: ['config']
           }
-        }
+        },
       ]
     }));
 
@@ -271,13 +316,40 @@ class QuickChartServer {
           }
         }
 
+        case 'create_chart': {
+          let config, response: any = {};
+          try {
+            const config = this.generateChartConfig(request.params.arguments);
+
+            const response = await axios.post(`${QUICKCHART_BASE_URL}/create`,
+              {chart: config});
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: response.data.url
+                }
+              ]
+            };
+          } catch (error: any) {
+            if (error instanceof McpError) {
+              throw error;
+            }
+            throw new McpError(
+              ErrorCode.InternalError,
+              `Failed to generate chart: ${error?.message || 'Unknown error'}`
+            );
+          }
+        }
+
         case 'download_chart': {
           try {
-            const { config, outputPath: userProvidedPath } = request.params.arguments as { 
+            const { config, outputPath: userProvidedPath } = request.params.arguments as {
               config: Record<string, unknown>;
               outputPath?: string;
             };
-            
+
             // Validate and normalize config first
             if (!config || typeof config !== 'object') {
               throw new McpError(
@@ -285,28 +357,28 @@ class QuickChartServer {
                 'Config must be a valid chart configuration object'
               );
             }
-            
+
             // Handle both direct properties and nested properties in 'data'
             let normalizedConfig: any = { ...config };
-            
+
             // If config has data property with datasets, extract them
-            if (config.data && typeof config.data === 'object' && 
+            if (config.data && typeof config.data === 'object' &&
                 (config.data as any).datasets && !normalizedConfig.datasets) {
               normalizedConfig.datasets = (config.data as any).datasets;
             }
-            
+
             // If config has data property with labels, extract them
-            if (config.data && typeof config.data === 'object' && 
+            if (config.data && typeof config.data === 'object' &&
                 (config.data as any).labels && !normalizedConfig.labels) {
               normalizedConfig.labels = (config.data as any).labels;
             }
-            
+
             // If type is inside data object but not at root, extract it
-            if (config.data && typeof config.data === 'object' && 
+            if (config.data && typeof config.data === 'object' &&
                 (config.data as any).type && !normalizedConfig.type) {
               normalizedConfig.type = (config.data as any).type;
             }
-            
+
             // Final validation after normalization
             if (!normalizedConfig.type || !normalizedConfig.datasets) {
               throw new McpError(
@@ -314,18 +386,18 @@ class QuickChartServer {
                 'Config must include type and datasets properties (either at root level or inside data object)'
               );
             }
-            
+
             // Generate default outputPath if not provided
             const fs = await import('fs');
             const path = await import('path');
             const os = await import('os');
-            
+
             let outputPath = userProvidedPath;
             if (!outputPath) {
               // Get home directory
               const homeDir = os.homedir();
               const desktopDir = path.join(homeDir, 'Desktop');
-              
+
               // Check if Desktop directory exists and is writable
               let baseDir = homeDir;
               try {
@@ -335,7 +407,7 @@ class QuickChartServer {
                 // Desktop doesn't exist or is not writable, use home directory
                 console.error('Desktop not accessible, using home directory instead');
               }
-              
+
               // Generate a filename based on chart type and timestamp
               const timestamp = new Date().toISOString()
                 .replace(/:/g, '-')
@@ -343,13 +415,13 @@ class QuickChartServer {
                 .replace('T', '_');
               const chartType = normalizedConfig.type || 'chart';
               outputPath = path.join(baseDir, `${chartType}_${timestamp}.png`);
-              
+
               console.error(`No output path provided, using: ${outputPath}`);
             }
-            
+
             // Check if the output directory exists and is writable
             const outputDir = path.dirname(outputPath);
-            
+
             try {
               await fs.promises.access(outputDir, fs.constants.W_OK);
             } catch (error) {
@@ -358,10 +430,10 @@ class QuickChartServer {
                 `Output directory does not exist or is not writable: ${outputDir}`
               );
             }
-            
+
             const chartConfig = this.generateChartConfig(normalizedConfig);
             const url = await this.generateChartUrl(chartConfig);
-            
+
             try {
               const response = await axios.get(url, { responseType: 'arraybuffer' });
               await fs.promises.writeFile(outputPath, response.data);
@@ -380,7 +452,7 @@ class QuickChartServer {
               }
               throw error;
             }
-            
+
             return {
               content: [
                 {
