@@ -12,6 +12,12 @@ import getenv from 'getenv';
 
 const QUICKCHART_BASE_URL = getenv('QUICKCHART_BASE_URL', 'https://quickchart.io/chart');
 
+// forked quickcharts forces http, rm this once resolved
+function forceProtocol(baseUrl: string, url: string): string {
+  const hostProtocol = new URL(baseUrl).protocol;
+  return url.replace(/^https?:/, hostProtocol);
+}
+
 interface ChartConfig {
   type: string;
   data: {
@@ -328,7 +334,7 @@ class QuickChartServer {
               content: [
                 {
                   type: 'text',
-                  text: response.data.url
+                  text: forceProtocol(QUICKCHART_BASE_URL, response.data.url)
                 }
               ]
             };
